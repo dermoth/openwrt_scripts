@@ -4,32 +4,32 @@
 #
 # This is the base schema for traffic shaping:
 #
-#                                           +------------+
-#                                           | Root Class |
-#                       +-------------------+    1.1     +------------------+
-#                       |                   |  80 Mbits  |                  |
-#                       v                   +------------+                  v
-#                 +------------+                                      +------------+
-#                 |  LAN Class |                                      |  LOC Class |
-#       +---------+    1.10    +--------+                   +---------+    1.20    +--------+
-#       |         |   50% LS   |        |                   |         |   50% LS   |        |
-#       |         +-----+------+        |                   |         +-----+------+        |
-#       |               |               |                   |               |               |
-#       v               v               v                   v               v               v
-# +------------+  +------------+  +------------+      +------------+  +------------+  +------------+
-# | Low Lat Cl.|  | Normal Cl. |  |  Bulk Cl.  |      | Low Lat Cl.|  | Normal Cl. |  |  Bulk Cl.  |
-# |    1.11    |  |    1.12    |  |    1.13    |      |    1.21    |  |    1.22    |  |    1.23    |
-# |   40% LS   |  |   40% LS   |  |   20% LS   |      |   40% LS   |  |   40% LS   |  |   20% LS   |
-# +------------+  +------------+  +------------+      +------------+  +------------+  +------------+
+#                                         +-----------+
+#                                         | RootClass |
+#                      +------------------+    1.1    +-----------------+
+#                      |                  | 800 Kbits |                 |
+#                      v                  +-----------+                 v
+#                +-----------+                                    +-----------+
+#                | LAN Class |                                    | LOC Class |
+#       +--------+   1.10    +--------+                  +--------+   1.20    +--------+
+#       |        |  50% LS   |        |                  |        |  50% LS   |        |
+#       |        +-----+-----+        |                  |        +-----+-----+        |
+#       |              |              |                  |              |              |
+#       v              v              v                  v              v              v
+# +-----------+  +-----------+  +-----------+      +-----------+  +-----------+  +-----------+
+# | LowLat Cl.|  | Normal Cl.|  |  Bulk Cl. |      | LowLat Cl.|  | Normal Cl.|  |  Bulk Cl. |
+# |    1.11   |  |    1.12   |  |    1.13   |      |    1.21   |  |    1.22   |  |    1.23   |
+# |   40% LS  |  |   40% LS  |  |   20% LS  |      |   40% LS  |  |   40% LS  |  |   20% LS  |
+# +-----------+  +-----------+  +-----------+      +-----------+  +-----------+  +-----------+
 #
-# That is, 50% share between each user (LAN, LOC), then proportional
+# That is 50% share between each user (LAN, LOC), then proportional
 # distribution for Low Latency, Normal and Bulk traffic.
 #
 # 1. Users
 #
 # User traffic is marked by iptables before source address is masqueraded:
-#  1: LAN Traffic
-#  2: LOC Traffic
+#  1:1x => LAN Traffic
+#  1:2x => LOC Traffic
 #
 # 2. Leaf Classes
 #
@@ -54,6 +54,7 @@ RATE20=98 # 20% of user's bw
 
 # Guaranteed latency for RATE40 LowLat class
 LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
+          # (Minimum considering the RATEUP max rate)
 
 # User classes source interfaces
 LAN_USER=br-lan
@@ -74,6 +75,11 @@ LOC_USER=br-loc
 LOWT="t:d:22 t:d:53 t:d:80 t:d:443 u:d:53 u:d:123"
 
 # Bulk UDP, TCP Ports
+#
+# eMule: 4662, 4672
+# Vuze: 19403, 19404, 35575, 16680, 33189, 1900
+# Bitcoin: 8332, 8333
+#
 BULK="t:s:4662 u:s:4672 t:s:19403 u:s:19403 t:s:19404 t:s:8332 t:d:8332 t:s:8333 t:d:8333"
 
 # NB: Also look near end of script for custom rules
@@ -149,7 +155,7 @@ $iptables -t mangle -A PREROUTING ! -i $DEV -j QoS_wan
 $iptables -t mangle -A OUTPUT -j QoS_wan
 
 # iptables MARK's - packet source (LAN/LOC)
-# Default LAN (mark 1), unless from br-loc (overwrite with mark 2)
+# Default LAN (mark 1), unless from br-loc (mark 2)
 $iptables -t mangle -A QoS_wan ! -i br-loc -j MARK --set-mark 0x0001
 $iptables -t mangle -A QoS_wan -i br-loc -j MARK --set-mark 0x0002
 
