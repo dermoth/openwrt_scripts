@@ -22,5 +22,5 @@ http://ace-host.stuart.id.au/russell/files/tc/doc/cls_u32.txt
   a. IPV6: getting tcp flow from multi-part headers? Seeme like offset doesn't
 	work even for fixed-size headers... (see ####-commended lines)
 
-	b. Do we need RED/GRED?
+  b. Do we need RED/GRED?
 
