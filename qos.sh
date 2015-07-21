@@ -48,9 +48,9 @@ cmd_tc="/usr/sbin/tc"
 # Set your outgoing interface and upload rate (in kbit/s) here
 DEV=pppoe-wan
 RATEUP=780 # Allow for PPPoE ovehead
-RATEUS=490 # Rate per user - RATEUP/2
-RATE40=196 # 40% of user's bw
-RATE20=98 # 20% of user's bw
+RATEUS=390 # Rate per user - RATEUP/2
+RATE40=156 # 40% of user's bw
+RATE20=78  # 20% of user's bw
 
 # Guaranteed latency for RATE40 LowLat class
 LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
