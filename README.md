@@ -1,4 +1,6 @@
-# OpenWRT Scripts (Formerly known as QoS)
+# OpenWRT Scripts
+
+(Formerly known as QoS)
 
 ## QoS Script
 
