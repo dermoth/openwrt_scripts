@@ -17,13 +17,16 @@ classes: Low-Latency, Bulk and Normal (everything else).
 2. Documentation links for the HFSC scheduler
 
    http://linux-ip.net/articles/hfsc.en/
+
    http://linuxreviews.org/man/tc-hfsc/
 
 
 3. Documentation links for the u32 classifier
 
    http://lartc.org/howto/lartc.qdisc.filters.html
+
    http://lartc.org/howto/lartc.adv-filter.html
+
    http://ace-host.stuart.id.au/russell/files/tc/doc/cls_u32.txt
 
 
