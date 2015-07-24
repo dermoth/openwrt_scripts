@@ -61,18 +61,18 @@ LAN_USER=br-lan
 LOC_USER=br-loc
 
 # Port spec (TCP/UDP): {t|u}:{s|d}:<n>
-#
-# t = TCP
-# u = UDP
-#
-# s = Source port
-# d = Dest port
-#
-# n = Port number
-#
+#                        |     |    |
+# t = TCP _______________|     |    |
+# u = UDP                      |    |
+#                              |    |
+# s = Source port _____________|    |
+# d = Dest port                     |
+#                                   |
+# n = Port number  _________________|
+#     (TCP or UDP)
 
 # Low Lat UDP, TCP Ports ## TODO: test exception
-LOWT="t:d:22 t:d:53 t:d:80 t:d:443 u:d:53 u:d:123"
+LOWLAT="t:d:22 t:d:53 t:d:80 t:d:443 u:d:53 u:d:123"
 
 # Bulk UDP, TCP Ports
 #
@@ -276,7 +276,7 @@ done
 # 4. Low Lat & bulk
 for mark in 1 2
 do
-	for pspec in $LOWT
+	for pspec in $LOWLAT
 	do
 		pspec2filter $DEV $mark "$pspec" 1
 	done
