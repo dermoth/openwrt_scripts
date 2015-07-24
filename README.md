@@ -16,23 +16,23 @@ classes: Low-Latency, Bulk and Normal (everything else).
 
 2. Documentation links for the HFSC scheduler
 
-http://linux-ip.net/articles/hfsc.en/
-http://linuxreviews.org/man/tc-hfsc/
+   http://linux-ip.net/articles/hfsc.en/
+   http://linuxreviews.org/man/tc-hfsc/
 
 
 3. Documentation links for the u32 classifier
 
-http://lartc.org/howto/lartc.qdisc.filters.html
-http://lartc.org/howto/lartc.adv-filter.html
-http://ace-host.stuart.id.au/russell/files/tc/doc/cls_u32.txt
+   http://lartc.org/howto/lartc.qdisc.filters.html
+   http://lartc.org/howto/lartc.adv-filter.html
+   http://ace-host.stuart.id.au/russell/files/tc/doc/cls_u32.txt
 
 
 4. Open issues
 
-  a. IPV6: getting tcp flow from multi-part headers? Seems like offset doesn't
+   a. IPV6: getting tcp flow from multi-part headers? Seems like offset doesn't
 	work even for fixed-size headers... (see ####-commended lines)
 
-  b. Do we need RED/GRED?
+   b. Do we need RED/GRED?
 
 ## Curfew Script
 
