@@ -1,0 +1,16 @@
+#!/bin/sh
+
+if [ "$INTERFACE" = "wan" ]
+then
+	if [ "$ACTION" = "ifup" ]
+	then
+		/etc/qos.sh >/tmp/qos.log 2>&1
+		message="QoS started (rc=$?)"
+	elif [ "$ACTION" = "ifdown" ]
+	then
+		/etc/qos.sh stop >/tmp/qos-stop.log 2>&1
+		message="QoS stopped (rc=$?)"
+	fi
+	logger -t "$(basename "$script")" "$ACTION $INTERFACE: $message"
+fi
+
