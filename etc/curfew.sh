@@ -70,22 +70,41 @@ foreach_cf() {
 	done
 }
 
+fwreload() {
+	logger -t "$(basename "$0")" "Reloading firewall..."
+	/etc/init.d/firewall reload >/dev/null 2>&1
+}
+
+termlogger() {
+	shift
+	echo "$@"
+}
+
+if [ -t 1 ]
+then
+	# Use terminal output if running interactively
+	alias logger=termlogger
+else
+	# Otherwise log errors
+	exec >/tmp/curfew.$RULE_PREFIX.log 2>&1
+fi
+
 case ${1:-help} in
 	start)
-		echo "curfew: Enabling rules..."
+		logger -t "$(basename "$0")" "Enabling rules..."
 		foreach_cf enable
 		uci commit
-		echo "curfew: Reloading firewall rules..."
-		/etc/init.d/firewall reload >/dev/null 2>&1
-		echo "curfew: Started OK"
+
+		fwreload
+		logger -t "$(basename "$0")" "Started OK"
 		;;
 	stop)
-		echo "curfew: Enabling rules..."
+		logger -t "$(basename "$0")" "Disabling rules..."
 		foreach_cf disable
 		uci commit
-		echo "curfew: Reloading firewall rules..."
-		/etc/init.d/firewall reload >/dev/null 2>&1
-		echo "curfew: Stoped OK"
+
+		fwreload
+		logger -t "$(basename "$0")" "Stoped OK"
 		;;
 	status)
 		foreach_cf show
