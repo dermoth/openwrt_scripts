@@ -26,6 +26,7 @@
 #
 
 RULE_PREFIX=${RULE_PREFIX-"CF_"}
+CONNTRACK_BIN="/usr/sbin/conntrack"
 
 set -eu
 
@@ -89,6 +90,16 @@ else
 	exec >/tmp/curfew.$RULE_PREFIX.log 2>&1
 fi
 
+# OpenWRT add user rules after contrack rule, make sure we can flush them
+if [ -x "$CONNTRACK_BIN" ]
+then
+	# nf_conntrack_netlink is needed; load it is not present.
+	[ -d /sys/module/nf_conntrack_netlink ] || modprobe nf_conntrack_netlink
+else
+	logger -t "$(basename "$0")" "$CONNTRACK_BIN: Not found; will not be able to flush extablished connections"
+	CONNTRACK_BIN=""
+fi
+
 case ${1:-help} in
 	start)
 		logger -t "$(basename "$0")" "Enabling rules..."
@@ -96,6 +107,11 @@ case ${1:-help} in
 		uci commit
 
 		fwreload
+		# Flush all established connections
+		if [ -n "$CONNTRACK_BIN" ]
+		then
+			$CONNTRACK_BIN -F
+		fi
 		logger -t "$(basename "$0")" "Started OK"
 		;;
 	stop)
