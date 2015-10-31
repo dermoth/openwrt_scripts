@@ -4,26 +4,29 @@
 #
 # This is the base schema for traffic shaping:
 #
-#                                         +-----------+
-#                                         | RootClass |
-#                      +------------------+    1.1    +-----------------+
-#                      |                  | 800 Kbits |                 |
-#                      v                  +-----------+                 v
-#                +-----------+                                    +-----------+
-#                | LAN Class |                                    | LOC Class |
-#       +--------+   1.10    +--------+                  +--------+   1.20    +--------+
-#       |        |  50% LS   |        |                  |        |  50% LS   |        |
-#       |        +-----+-----+        |                  |        +-----+-----+        |
-#       |              |              |                  |              |              |
-#       v              v              v                  v              v              v
-# +-----------+  +-----------+  +-----------+      +-----------+  +-----------+  +-----------+
-# | LowLat Cl.|  | Normal Cl.|  |  Bulk Cl. |      | LowLat Cl.|  | Normal Cl.|  |  Bulk Cl. |
-# |    1.11   |  |    1.12   |  |    1.13   |      |    1.21   |  |    1.22   |  |    1.23   |
-# |   40% LS  |  |   40% LS  |  |   20% LS  |      |   40% LS  |  |   40% LS  |  |   20% LS  |
-# +-----------+  +-----------+  +-----------+      +-----------+  +-----------+  +-----------+
+#                                              +-----------+
+#                                              | RootClass |
+#                 +----------------------------+    1.1    +--------------+
+#                 |                            | 800 Kbits |              |
+#                 |                            +-----------+              |
+#                 |                                   |                   |
+#                 v                                   v                   v
+#           +-----------+                       +-----------+        +---------+
+#           | LAN Class |                       | LOC Class |        |  VoIP   |
+#     +-----+   1.10    +-----+           +-----+   1.20    +-----+  |  1.31   |
+#     |     |  50% LS   |     |           |     |  50% LS   |     |  | 200k LS |
+#     |     +-----+-----+     |           |     +-----+-----+     |  +---------+
+#     |           |           |           |           |           |
+#     v           v           v           v           v           v
+# +--------+  +--------+  +--------+  +--------+  +--------+  +--------+
+# | LowLat |  | Normal |  |  Bulk  |  | LowLat |  | Normal |  |  Bulk  |
+# |  1.11  |  |  1.12  |  |  1.13  |  |  1.21  |  |  1.22  |  |  1.23  |
+# | 40% LS |  | 40% LS |  | 20% LS |  | 40% LS |  | 40% LS |  | 20% LS |
+# +--------+  +--------+  +--------+  +--------+  +--------+  +--------+
 #
-# That is 50% share between each user (LAN, LOC), then proportional
-# distribution for Low Latency, Normal and Bulk traffic.
+# That is 50% share between each user (LAN, LOC), aftter removing the 200k
+# reserved voip bandwidth then proportional distribution for Low Latency,
+# Normal and Bulk traffic.
 #
 # 1. Users
 #
@@ -47,10 +50,13 @@ cmd_tc="/usr/sbin/tc"
 
 # Set your outgoing interface and upload rate (in kbit/s) here
 DEV=pppoe-wan
-RATEUP=780 # Allow for PPPoE ovehead
-RATEUS=390 # Rate per user - RATEUP/2
-RATE40=156 # 40% of user's bw
-RATE20=78  # 20% of user's bw
+RATEUP=700 # Allow for PPPoE ovehead
+RATEVO=100 # Reserved for VoIP
+RATEUS=300 # Rate per user - (RATEUP - RATEVO)/2
+RATE40=120 # 40% of user's bw
+RATE20=60  # 20% of user's bw
+
+# Guaranteed latency for VOIP, assuming 200 bytes packets
 
 # Guaranteed latency for RATE40 LowLat class
 LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
@@ -80,7 +86,7 @@ LOWLAT="t:d:22 t:d:53 t:d:80 t:d:443 u:d:53 u:d:123"
 # Vuze: 19403, 19404, 35575, 16680, 33189, 1900
 # Bitcoin: 8332, 8333
 #
-BULK="t:s:4662 u:s:4672 t:s:19403 u:s:19403 t:s:19404 t:s:8332 t:d:8332 t:s:8333 t:d:8333"
+BULK="t:s:4662 u:s:4672 t:s:19403 u:s:19403 t:s:19404 u:s:35575 u:s:16680 u:s:33189 u:s:1900 u:s:19404 t:s:8332 t:d:8332 t:s:8333 t:d:8333 u:s:35575"
 
 # NB: Also look near end of script for custom rules
 
@@ -88,26 +94,27 @@ BULK="t:s:4662 u:s:4672 t:s:19403 u:s:19403 t:s:19404 t:s:8332 t:d:8332 t:s:8333
 
 ## DEBUG
 
-# Uncomment these to debug commands
-iptables="dbg_iptables"
-tc="dbg_tc"
+# Uncomment this to debug commands
+#DEBUG=1
 
 ## End
 
 # Debug functions - echo + run
 dbg_iptables() {
-	$cmd_iptables $@ ||
-	echo E: iptables $@
+	[ "${DEBUG:-0}" -eq 0 ] || echo D: iptables "$@"
+	$cmd_iptables "$@" ||
+	echo E: iptables "$@"
 }
 
 dbg_tc() {
-	$cmd_tc $@ ||
-	echo E: tc $@
+	[ "${DEBUG:-0}" -eq 0 ] || echo D: tc "$@"
+	$cmd_tc "$@" ||
+	echo E: tc "$@"
 }
 
 # Default commands
-iptables=${iptables:-$cmd_iptables}
-tc=${tc:-$cmd_tc}
+iptables="dbg_iptables"
+tc="dbg_tc"
 
 # Reset everything to a known state (cleared)
 $tc qdisc del dev $DEV root 2>/dev/null
@@ -137,17 +144,21 @@ $tc class add dev $DEV parent 1:1 classid 1:20 hfsc ls m2 ${RATEUS}kbit
 
 # Add leaf classes
 
-# Low Lat
+# VOIP
 $tc class add dev $DEV parent 1:10 classid 1:11 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
 $tc class add dev $DEV parent 1:20 classid 1:21 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
 
+# Low Lat
+$tc class add dev $DEV parent 1:10 classid 1:12 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
+$tc class add dev $DEV parent 1:20 classid 1:22 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
+
 # Normal
-$tc class add dev $DEV parent 1:10 classid 1:12 hfsc sc rate ${RATE40}kbit
-$tc class add dev $DEV parent 1:20 classid 1:22 hfsc sc rate ${RATE40}kbit
+$tc class add dev $DEV parent 1:10 classid 1:13 hfsc sc rate ${RATE40}kbit
+$tc class add dev $DEV parent 1:20 classid 1:23 hfsc sc rate ${RATE40}kbit
 
 # Bulk
-$tc class add dev $DEV parent 1:10 classid 1:13 hfsc sc rate ${RATE20}kbit
-$tc class add dev $DEV parent 1:20 classid 1:23 hfsc sc rate ${RATE20}kbit
+$tc class add dev $DEV parent 1:10 classid 1:14 hfsc sc rate ${RATE20}kbit
+$tc class add dev $DEV parent 1:20 classid 1:24 hfsc sc rate ${RATE20}kbit
 
 # iptables QoS chain
 $iptables -t mangle -N QoS_wan
@@ -167,12 +178,14 @@ $iptables -t mangle -A QoS_wan -i br-loc -j MARK --set-mark 0x0002
 #
 # ## x below is one of: 1=LAN, 2=LOC
 #
-# x0:0 :: IP filters
-# x1:0 :: IP6 filters (from 6to4 de-capsulation)
+# Level 1 Tables:
+#  x0:0 :: IP filters
+#  x1:0 :: IP6 filters (from 6to4 de-capsulation)
 #
-# x01:0 :: TCP filters
-# x02:0 :: UDP filters
-# x03:0 :: Other filters
+# Level 2 Tables:
+#  x01:0 :: TCP filters
+#  x02:0 :: UDP filters
+#  x03:0 :: Other filters
 #
 # NB: As much as I'd like to offer source filters (i.e. classify flow based
 # on source), it's not gonna happen with NAT as filtering happens after the
@@ -225,12 +238,14 @@ pspec2filter() {
 		exec "$0" stop
 	esac
 
-	$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match $proto $way "$port" ffff flowid 1:${mk}${fi}
+	$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match $proto $way "$port" 0xffff flowid 1:${mk}${fi}
 }
 
 # 2. Tables
 for mark in 1 2
 do
+	## See Tables section above (comment) for details
+
 	# Level 1
 	#$tc filter add dev $DEV parent 1:0 prio 1 handle ${mark}0: u32 divisor 256
 	#$tc filter add dev $DEV parent 1:0 prio 1 handle ${mark}1: u32 divisor 1
@@ -241,19 +256,24 @@ do
 	$tc filter add dev $DEV parent 1:0 prio 1 handle ${mark}03: u32 divisor 1
 done
 
+# VoIP - We need our own class, in the mean time hack into 1:11
+tc filter add dev $DEV parent 1:0 prio 1 u32 match ip src 192.168.1.10/32 match ip protocol 17 0xff flowid 1:11
+
 # 3. Protocol filters
 for mark in 1 2
 do
+	## See Tables section above (comment) for details
+
 	# Can be used for dest ip classification
         #$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff link ${mark}0:0:
 
 	# TCP
-	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff match ip protocol 0x06 0xff link ${mark}01:0: offset at 0 mask 0f00 shift 6 plus 0 eat
+	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff match ip protocol 6 0xff link ${mark}01:0: offset at 0 mask 0x0f00 shift 6 plus 0 eat
 	#### TCP from de-capsulated ipv6
 	###$tc filter add dev $DEV parent 1:0 prio 1 u32 ht ${mark}1:0: match ip6 protocol 0x06 0xff link ${mark}01:0: offset plus 320 eat
 
 	# UDP
-	#$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff match ip protocol 0x11 0xff link ${mark}02:0: offset at 0 mask 0f00 shift 6 plus 0 eat
+	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff match ip protocol 17 0xff link ${mark}02:0: offset at 0 mask 0x0f00 shift 6 plus 0 eat
 	#### UDP from de-capsulated ipv6
 	###$tc filter add dev $DEV parent 1:0 prio 1 u32 ht ${mark}1:0: match ip6 protocol 0x11 0xff link ${mark}02:0: offset at 0 mask 0 shift 0 plus 320 eat
 
@@ -278,12 +298,12 @@ for mark in 1 2
 do
 	for pspec in $LOWLAT
 	do
-		pspec2filter $DEV $mark "$pspec" 1
+		pspec2filter $DEV $mark "$pspec" 2
 	done
 
 	for pspec in $BULK
 	do
-		pspec2filter $DEV $mark "$pspec" 3
+		pspec2filter $DEV $mark "$pspec" 4
 	done
 
 done
@@ -293,7 +313,7 @@ for mark in 1 2
 do
 	# NB: We append to the master table - anything unmatched in the
 	# user tables will fall here.
-	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff flowid 1:${mark}2
+	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff flowid 1:${mark}3
 done
 
 ## Custom rules
