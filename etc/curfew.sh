@@ -41,7 +41,7 @@ set_rule() {
 
 	case $method in
 		enable)
-			uci delete "firewall.@rule[$ruleid].enabled=0"
+			uci -q delete "firewall.@rule[$ruleid].enabled=0" || true
 			;;
 		disable)
 			uci set "firewall.@rule[$ruleid].enabled=0"
