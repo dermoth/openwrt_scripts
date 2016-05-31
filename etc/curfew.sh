@@ -106,7 +106,10 @@ case ${1:-help} in
 		foreach_cf enable
 		uci commit
 
+		# Reload firewall
+
 		fwreload
+
 		# Flush all established connections
 		if [ -n "$CONNTRACK_BIN" ]
 		then
@@ -119,6 +122,7 @@ case ${1:-help} in
 		foreach_cf disable
 		uci commit
 
+		# Reload firewall
 		fwreload
 		logger -t "$(basename "$0")" "Stoped OK"
 		;;
