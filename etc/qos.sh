@@ -25,7 +25,7 @@
 # +--------+ +--------+ +--------+  +--------+ +--------+ +--------+ +---------+
 #
 # That is 50% share between each user (LAN, LOC), aftter removing the 200k
-# reserved voip bandwidth then proportional distribution for Low Latency,
+# reserved VoIP bandwidth then proportional distribution for Low Latency,
 # Normal and Bulk traffic.
 #
 # 1. Users/VoIP
@@ -60,11 +60,14 @@ RATEUS=250 # Rate per user - (RATEUP - RATEVO)/2
 RATE40=100 # 40% of user's bw
 RATE20=50  # 20% of user's bw
 
-# Guaranteed latency for VOIP, assuming 200 bytes packets
+# Guaranteed latency for VoIP, assuming 200 bytes packets
 # + overhead = 225 - these packets can be transfered in 2.6ms
 LAT_VO=3
 # RTP packet size for VoIP (counting overhead)
 PS_VO=225
+
+# u32 rule to match Voip traffic
+MATCH_VO="match ip src 192.168.1.10/32 match ip protocol 17 0xff"
 
 # Guaranteed latency for RATE40 LowLat class (assuming 1500 MTU)
 LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
@@ -73,6 +76,12 @@ LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
 # User classes source interfaces
 LAN_USER=br-lan
 LOC_USER=br-loc
+
+# Max payload size for LOWLAT class. According to Google's SPDY research
+# project whitepaper, typical header sizes of 700-800 bytes is common
+# for HTTP. This bitmask lets us filter out all packets 1024 bytes and
+# larger. This will still rule out bulk HTTP-based uploads.
+LB_MAXMASK=0xfc00
 
 # Port spec (TCP/UDP): {t|u}:{s|d}:<n>
 #                        |     |    |
@@ -86,7 +95,11 @@ LOC_USER=br-loc
 #     (TCP or UDP)
 
 # Low Lat UDP, TCP Ports
-LOWLAT="t:d:22 t:d:53 t:d:80 t:d:443 u:d:53 u:d:123"
+LOWLAT="t:d:53 u:d:53 u:d:123"
+
+# Low Lat UDP, TCP ports for service doing bulk transfers too, limited
+# to LB_MAXMASK
+LOWLAT_BULK="t:d:22 t:d:80 t:d:443 u:d:4500"
 
 # Bulk UDP, TCP Ports
 #
@@ -153,7 +166,7 @@ $tc class add dev $DEV parent 1:1 classid 1:30 hfsc ls m2 ${RATEVO}kbit
 
 # Add leaf classes
 
-# VOIP
+# VoIP
 $tc class add dev $DEV parent 1:30 classid 1:31 hfsc sc umax ${PS_VO}b dmax $LAT_VO rate ${RATEVO}kbit
 
 # Low Lat
@@ -206,7 +219,7 @@ $iptables -t mangle -A QoS_wan -i br-loc -j MARK --set-mark 0x0002
 # 1. Functions
 
 # This function takes a port spec and make a match out of it
-# prototype: pspec2filter <dev> <mark> <pspec> <flowid>
+# prototype: pspec2filter <dev> <mark> <pspec> <flowid> [<flag> [<flowid>]]
 # NB: <flowid> is only the last digit
 
 pspec2filter() {
@@ -214,6 +227,8 @@ pspec2filter() {
 	mk=$2
 	arg=$3
 	fi=$4
+	flag=${5:-} # If set, optional classification flag
+	fb=${6:-} # if flag is set, this is the fallback flowid
 
 	p="${arg%%:*}"    # proto symbol (tcp/udp)
 	arg="${arg#*:}"   # Unused part of pspec
@@ -246,7 +261,16 @@ pspec2filter() {
 		exec "$0" stop
 	esac
 
-	$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match $proto $way "$port" 0xffff flowid 1:${mk}${fi}
+	case "$flag" in
+	nobulk)
+		# Match only small IP packets, the rest goes to "fallback" flowid
+		$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match u16 0x0000 "$LB_MAXMASK" at 2 \
+		               match $proto $way "$port" 0xffff flowid 1:${mk}${fi}
+		$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match $proto $way "$port" 0xffff flowid 1:${mk}${fb}
+		;;
+	*)
+		$tc filter add dev $dv parent 1:0 prio 1 u32 ht ${mk}0${pnum}:0: match $proto $way "$port" 0xffff flowid 1:${mk}${fi}
+	esac
 }
 
 # 2. Tables
@@ -270,7 +294,7 @@ do
 	## See Tables section above (comment) for details
 
 	# Can be used for dest ip classification
-        #$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff link ${mark}0:0:
+	#$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff link ${mark}0:0:
 
 	# TCP
 	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff match ip protocol 6 0xff link ${mark}01:0: offset at 0 mask 0x0f00 shift 6 plus 0 eat
@@ -299,9 +323,7 @@ do
 done
 
 # 4. VoIP
-
-# FIXME: Use the right table; in the mean time hack into 1:
-tc filter add dev $DEV parent 1:0 prio 1 u32 match ip src 192.168.1.10/32 match ip protocol 17 0xff flowid 1:31
+$tc filter add dev $DEV parent 1:0 prio 1 u32 $MATCH_VO flowid 1:31
 
 # 5. Low Lat & bulk
 for mark in 1 2
@@ -309,6 +331,10 @@ do
 	for pspec in $LOWLAT
 	do
 		pspec2filter $DEV $mark "$pspec" 1
+	done
+	for pspec in $LOWLAT_BULK
+	do
+		pspec2filter $DEV $mark "$pspec" 1 nobulk 3
 	done
 
 	for pspec in $BULK
