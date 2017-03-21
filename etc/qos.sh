@@ -66,8 +66,9 @@ LAT_VO=3
 # RTP packet size for VoIP (counting overhead)
 PS_VO=225
 
-# u32 rule to match Voip traffic
-MATCH_VO="match ip src 192.168.1.10/32 match ip protocol 17 0xff"
+# iptables rule to match Voip traffic
+# ATA is .10, but also allow other devices... .8  to .15
+MATCH_VO="-s 192.168.1.8/29 -p udp"
 
 # Guaranteed latency for RATE40 LowLat class (assuming 1500 MTU)
 LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
@@ -190,6 +191,9 @@ $iptables -t mangle -A OUTPUT -j QoS_wan
 # Default LAN (mark 1), unless from br-loc (mark 2)
 $iptables -t mangle -A QoS_wan ! -i br-loc -j MARK --set-mark 0x0001
 $iptables -t mangle -A QoS_wan -i br-loc -j MARK --set-mark 0x0002
+
+# Mark vor VoIP traffic
+$iptables -t mangle -A QoS_wan $MATCH_VO -m length --length 0:$PS_VO -j MARK --set-mark 0x0003
 
 # $tc filtering
 #
@@ -319,11 +323,10 @@ do
 
 	# All other protos
 	$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x000${mark} 0xffff link ${mark}03:0: offset at 0 mask 0f00 shift 6 plus 0 eat
-
 done
 
 # 4. VoIP
-$tc filter add dev $DEV parent 1:0 prio 1 u32 $MATCH_VO flowid 1:31
+$tc filter add dev $DEV parent 1:0 prio 1 u32 match mark 0x0003 0xffff flowid 1:31
 
 # 5. Low Lat & bulk
 for mark in 1 2
