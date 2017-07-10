@@ -54,15 +54,16 @@ cmd_tc="/usr/sbin/tc"
 
 # Set your outgoing interface and upload rate (in kbit/s) here
 DEV=pppoe-wan
-RATEUP=700 # Allow for PPPoE ovehead
-RATEVO=200 # Reserved for VoIP
-RATEUS=250 # Rate per user - (RATEUP - RATEVO)/2
-RATE40=100 # 40% of user's bw
-RATE20=50  # 20% of user's bw
+RATEUP=10000 # Allow for PPPoE ovehead
+RATEVO=500 # Reserved for VoIP
+RATEUS=4750 # Rate per user - (RATEUP - RATEVO)/2
+RATE40=1900 # 40% of user's bw
+RATE20=950  # 20% of user's bw
 
-# Guaranteed latency for VoIP, assuming 200 bytes packets
-# + overhead = 225 - these packets can be transfered in 2.6ms
-LAT_VO=3
+# Guaranteed latency for VoIP, assuming 3*200 bytes packets
+# + overhead = 3*225 - these packets can be transfered in 0.78ms
+LAT_VO=1
+PS_BR=675
 # RTP packet size for VoIP (counting overhead)
 PS_VO=225
 
@@ -168,7 +169,7 @@ $tc class add dev $DEV parent 1:1 classid 1:30 hfsc ls m2 ${RATEVO}kbit
 # Add leaf classes
 
 # VoIP
-$tc class add dev $DEV parent 1:30 classid 1:31 hfsc sc umax ${PS_VO}b dmax $LAT_VO rate ${RATEVO}kbit
+$tc class add dev $DEV parent 1:30 classid 1:31 hfsc sc umax ${PS_BR}b dmax $LAT_VO rate ${RATEVO}kbit
 
 # Low Lat
 $tc class add dev $DEV parent 1:10 classid 1:11 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
