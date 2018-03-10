@@ -72,7 +72,8 @@ PS_VO=225
 MATCH_VO="-s 192.168.1.8/29 -p udp"
 
 # Guaranteed latency for RATE40 LowLat class (assuming 1500 MTU)
-LAT_MS=50 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
+LAT_BR=1500
+LAT_MS=1 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
           # (Minimum considering the RATEUP max rate)
 
 # User classes source interfaces
@@ -172,8 +173,8 @@ $tc class add dev $DEV parent 1:1 classid 1:30 hfsc ls m2 ${RATEVO}kbit
 $tc class add dev $DEV parent 1:30 classid 1:31 hfsc sc umax ${PS_BR}b dmax $LAT_VO rate ${RATEVO}kbit
 
 # Low Lat
-$tc class add dev $DEV parent 1:10 classid 1:11 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
-$tc class add dev $DEV parent 1:20 classid 1:21 hfsc sc umax 1500b dmax $LAT_MS rate ${RATE40}kbit
+$tc class add dev $DEV parent 1:10 classid 1:11 hfsc sc umax ${LAT_BR}b dmax $LAT_MS rate ${RATE40}kbit
+$tc class add dev $DEV parent 1:20 classid 1:21 hfsc sc umax ${LAT_BR}b dmax $LAT_MS rate ${RATE40}kbit
 
 # Normal
 $tc class add dev $DEV parent 1:10 classid 1:12 hfsc sc rate ${RATE40}kbit
