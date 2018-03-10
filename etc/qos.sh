@@ -46,6 +46,13 @@
 #
 #  VoIP (1.31): Tuned for the specific RTP packet size used
 
+# FAIR WARNING: I wrote this qos script with the least reliance possible on
+# iptables to learn the u32 classifier. The caveat is that it's much more
+# complex and flexible than it should, most notably it cannot to my knowledge
+# handle IPv6's variable header lengths. It should be rewritten to use iptables
+# MARK's to do proper classification (as it does to differentiate between source
+# LANs before traffic is masqueraded behind the router's external IP address).
+
 ## Config
 
 # Executables

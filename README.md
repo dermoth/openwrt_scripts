@@ -9,6 +9,13 @@ This is a QoS Script using the Hierarchical fair-service curve scheduler
 you and your roommate). Then for each share, the traffic is divided in three
 classes: Low-Latency, Bulk and Normal (everything else).
 
+FAIR WARNING: I wrote this qos script with the least reliance possible on
+iptables to learn the u32 classifier. The caveat is that it's much more
+complex and flexible than it should, most notably it cannot to my knowledge
+handle IPv6's variable header lengths. It should be rewritten to use iptables
+MARK's to do proper classification (as it does to differentiate between source
+LANs before traffic is masqueraded behind the router's external IP address).
+
 
 1. See the script header for more info and configuration details. The traffic
    shaping schema at the top of the script can be rendered with ditaa.
