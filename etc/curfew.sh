@@ -31,7 +31,7 @@ CONNTRACK_BIN="/usr/sbin/conntrack"
 set -eu
 
 usage() {
-	echo "Usage: $0 {start|stop|status}"
+	echo "Usage: $0 { start | stop | status }"
 	exit 1
 }
 
@@ -45,6 +45,9 @@ set_rule() {
 			;;
 		disable)
 			uci set "firewall.@rule[$ruleid].enabled=0"
+			;;
+		flush)
+			flushmac $(uci get "firewall.@rule[$ruleid].src_mac")
 			;;
 		show)
 			name=$(uci get "firewall.@rule[$ruleid].name")
@@ -69,6 +72,34 @@ foreach_cf() {
 		[ "${rulename:0:${#RULE_PREFIX}}" == "$RULE_PREFIX" ] || continue
 		set_rule $idx $method
 	done
+}
+
+flushmac() {
+	mac=$1
+
+	iparpt=$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $1}' /proc/net/arp)
+	ipdhcp=$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $3}' /tmp/dhcp.leases)
+
+	# Log both on mismatch but always use lease file until we know one's more reliable
+	if [ "$iparpt" != "$ipdhcp" ]
+	then
+		logger -t "$(basename "$0")" "WARN: ip mismatch (arp:leases): $iparpt:$ipdhcp"
+	else
+		if [ -n "$ipdhcp" ]
+		then
+			logger -t "$(basename "$0")" "Resolved $mac to $ipdhcp from /tmp/dhcp.leases"
+		else
+			logger -t "$(basename "$0")" "Couldn't resolve $mac to an IP address: nothing to flush"
+			return
+		fi
+	fi
+
+	# Retain only STDERR from conntrack but send it to STDOUT for logging
+	# NB: Looks like I need only the first of each set, but it can't hurt...
+	logger -t "$(basename "$0")" "src=$ipdhcp: $($CONNTRACK_BIN -D -s "$ipdhcp" 2>&1 1>/dev/null || true)"
+	logger -t "$(basename "$0")" "dst=$ipdhcp: $($CONNTRACK_BIN -D -d "$ipdhcp" 2>&1 1>/dev/null || true)"
+	logger -t "$(basename "$0")" "reply-src=$ipdhcp: $($CONNTRACK_BIN -D -r "$ipdhcp" 2>&1 1>/dev/null || true)"
+	logger -t "$(basename "$0")" "reply-dst=$ipdhcp: $($CONNTRACK_BIN -D -q "$ipdhcp" 2>&1 1>/dev/null || true)"
 }
 
 fwreload() {
@@ -96,7 +127,7 @@ then
 	# nf_conntrack_netlink is needed; load it is not present.
 	[ -d /sys/module/nf_conntrack_netlink ] || modprobe nf_conntrack_netlink
 else
-	logger -t "$(basename "$0")" "$CONNTRACK_BIN: Not found; will not be able to flush extablished connections"
+	logger -t "$(basename "$0")" "$CONNTRACK_BIN: Not found; will not be able to flush established connections"
 	CONNTRACK_BIN=""
 fi
 
@@ -110,10 +141,10 @@ case ${1:-help} in
 
 		fwreload
 
-		# Flush all established connections
+		# Flush all established connections for these rules
 		if [ -n "$CONNTRACK_BIN" ]
 		then
-			$CONNTRACK_BIN -F
+			foreach_cf flush
 		fi
 		logger -t "$(basename "$0")" "Started OK"
 		;;
