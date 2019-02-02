@@ -5,9 +5,14 @@
 # Author: Thomas Guyot-Sionnest <tguyot@gmail.com>
 #   This script has been released into the public domain.
 #
-# This script enables or disables all traffic rules begining in "$RULE_PREFIX"
-# defined below. The variable can also be passed as an environment variable to
-# the script
+# Dependencies: uci; contrack (optional, highly recommended)
+#
+# This script enables or disables all traffic rules beginning with
+# "$RULE_PREFIX" (defined after this header text). The value can also be passed
+# as an environment variable to the script.
+#
+# All rules must be blocking traffic and have an src_mac value (see BUGS below
+# for more details about src_mac requirement).
 #
 # Usage: ./curfew.sh { start | stop | status }
 #
@@ -21,11 +26,25 @@
 #   00 19 * * * /etc/curfew.sh start
 #   00 07 * * * /etc/curfew.sh stop
 #
-# This script has been tested on Barrier Breaker (14.07) and requires UCI (on
-# which LuCI - the standard web management interface - is based)
+# This script has been written for Barrier Breaker (14.07) and tested on
+# subsequent releases up to 18.06. It requires UCI (on which LuCI - the
+# standard web management interface - is based) and optionally contrack to
+# flush tracked connections after enabling the rules (this is required because
+# UCI does not allow adding rules before the ESTABLISHED,RELATED cut-through
+# rule).
+#
+# BUGS:
+#   - The script assumes all rules have an src_mac value regardless of the
+#     presence of the contrack binary.
+#   - The contrack code assumes all rules have an src_mac value, and use only
+#     that to flush relevant connections (see relevant FIXME in code)
 #
 
+# Set the value between double quotes to the default firewall rule prefix
 RULE_PREFIX=${RULE_PREFIX-"CF_"}
+
+# The conntrack binary (with fallback to `which conntrack`) - skipped if it
+# doesn't exist.
 CONNTRACK_BIN="/usr/sbin/conntrack"
 
 set -eu
@@ -47,6 +66,7 @@ set_rule() {
 			uci set "firewall.@rule[$ruleid].enabled=0"
 			;;
 		flush)
+			# FIXME: Check for others? dst_mac, src_ip, dst_ip ?
 			flushmac $(uci get "firewall.@rule[$ruleid].src_mac")
 			;;
 		show)
@@ -121,11 +141,18 @@ else
 	exec >/tmp/curfew.$RULE_PREFIX.log 2>&1
 fi
 
+# If CONNTRACK_BIN doesn't exists, try finding it in the path...
+[ -x "$CONNTRACK_BIN" ] || CONNTRACK_BIN=$(which conntrack) || :
+
 # OpenWRT add user rules after contrack rule, make sure we can flush them
 if [ -x "$CONNTRACK_BIN" ]
 then
 	# nf_conntrack_netlink is needed; load it is not present.
-	[ -d /sys/module/nf_conntrack_netlink ] || modprobe nf_conntrack_netlink
+	if ! { [ -d /sys/module/nf_conntrack_netlink ] || modprobe nf_conntrack_netlink; }
+	then
+		logger -t "$(basename "$0")" "modprobe nf_conntrack_netlink failed, will not be able to flush established connections"
+		CONNTRACK_BIN=""
+	fi
 else
 	logger -t "$(basename "$0")" "$CONNTRACK_BIN: Not found; will not be able to flush established connections"
 	CONNTRACK_BIN=""
