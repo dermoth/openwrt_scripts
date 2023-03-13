@@ -49,3 +49,21 @@ all".
 
 See the script header for more details.
 
+## sshfilter.sh
+
+Blacklist IP's attempting brute force attacks.
+
+Notes:
+
+* IPv6 support is unfinished, some IPv6 fuctions likely even broken
+
+* Whitelist not yet implemented
+
+* Lately I've seen a lot of connections fail before auth. Possibly attempts at
+  exploiting vulnerabilities, should match and block those as well.
+
+## wifimon.sh
+
+My 802.11ac Wifi has been suffering issues with DFS on radar events, I need to
+try upgrading the firmware/driver, in the meantime this restarts wifi when
+the issue happens.
