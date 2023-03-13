@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Firewall Curfew script for OpenWRT
 #
@@ -96,30 +96,38 @@ foreach_cf() {
 
 flushmac() {
 	mac=$1
+	#set -x
+	ipany=(
+		$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $1}' <(ip neigh))
+		$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $3}' /tmp/dhcp.leases)
+		$(awk 'BEGIN{IGNORECASE=1} /'${mac//:}'/ {print $9}' /tmp/hosts/odhcpd)
+	)
 
-	iparpt=$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $1}' /proc/net/arp)
-	ipdhcp=$(awk 'BEGIN{IGNORECASE=1} /'$mac'/ {print $3}' /tmp/dhcp.leases)
-
-	# Log both on mismatch but always use lease file until we know one's more reliable
-	if [ "$iparpt" != "$ipdhcp" ]
+	if [ ${#ipany[@]} -le 0 ]
 	then
-		logger -t "$(basename "$0")" "WARN: ip mismatch (arp:leases): $iparpt:$ipdhcp"
-	else
-		if [ -n "$ipdhcp" ]
+		logger -t "$(basename "$0")" "Couldn't resolve $mac to an IP address: nothing to flush"
+		return 0
+	fi
+	# Remove masks
+	ipany=(${ipany[@]%/*})
+	#set +x
+
+	for ipaddr in "${ipany[@]}"
+	do
+		if [ -n "$ipany" ]
 		then
-			logger -t "$(basename "$0")" "Resolved $mac to $ipdhcp from /tmp/dhcp.leases"
+			logger -t "$(basename "$0")" "Resolved $mac to $ipany from /tmp/dhcp.leases"
 		else
 			logger -t "$(basename "$0")" "Couldn't resolve $mac to an IP address: nothing to flush"
-			return
+			continue
 		fi
-	fi
-
-	# Retain only STDERR from conntrack but send it to STDOUT for logging
-	# NB: Looks like I need only the first of each set, but it can't hurt...
-	logger -t "$(basename "$0")" "src=$ipdhcp: $($CONNTRACK_BIN -D -s "$ipdhcp" 2>&1 1>/dev/null || true)"
-	logger -t "$(basename "$0")" "dst=$ipdhcp: $($CONNTRACK_BIN -D -d "$ipdhcp" 2>&1 1>/dev/null || true)"
-	logger -t "$(basename "$0")" "reply-src=$ipdhcp: $($CONNTRACK_BIN -D -r "$ipdhcp" 2>&1 1>/dev/null || true)"
-	logger -t "$(basename "$0")" "reply-dst=$ipdhcp: $($CONNTRACK_BIN -D -q "$ipdhcp" 2>&1 1>/dev/null || true)"
+		# Retain only STDERR from conntrack but send it to STDOUT for logging
+		# NB: Looks like I need only the first of each set, but it can't hurt...
+		logger -t "$(basename "$0")" "src=$ipany: $($CONNTRACK_BIN -D -s "$ipany" 2>&1 1>/dev/null || true)"
+		logger -t "$(basename "$0")" "dst=$ipany: $($CONNTRACK_BIN -D -d "$ipany" 2>&1 1>/dev/null || true)"
+		logger -t "$(basename "$0")" "reply-src=$ipany: $($CONNTRACK_BIN -D -r "$ipany" 2>&1 1>/dev/null || true)"
+		logger -t "$(basename "$0")" "reply-dst=$ipany: $($CONNTRACK_BIN -D -q "$ipany" 2>&1 1>/dev/null || true)"
+	done
 }
 
 fwreload() {
@@ -138,7 +146,7 @@ then
 	alias logger=termlogger
 else
 	# Otherwise log errors
-	exec >/tmp/curfew.$RULE_PREFIX.log 2>&1
+	exec 2>/tmp/curfew.$RULE_PREFIX.log
 fi
 
 # If CONNTRACK_BIN doesn't exists, try finding it in the path...
@@ -190,4 +198,3 @@ case ${1:-help} in
 	*)
 		usage
 esac
-

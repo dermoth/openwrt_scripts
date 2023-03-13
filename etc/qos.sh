@@ -58,7 +58,8 @@
 
 # Executables
 cmd_iptables="/usr/sbin/iptables"
-cmd_tc="/usr/sbin/tc"
+cmd_ip6tables="/usr/sbin/ip6tables"
+cmd_tc="/sbin/tc"
 
 # Set your outgoing interface and upload rate (in kbit/s) here
 DEV=pppoe-wan
@@ -68,6 +69,8 @@ RATEUS=4750 # Rate per user - (RATEUP - RATEVO)/2
 RATE40=1900 # 40% of user's bw
 RATE20=950  # 20% of user's bw
 
+# FIXME: So we need different values for IPv6? (esp, packet size for VoIP..
+#        Do we even need IPv6 VoIP????)
 # Guaranteed latency for VoIP, assuming 3*200 bytes packets
 # + overhead = 3*225 - these packets can be transfered in 0.78ms
 LAT_VO=1
@@ -77,16 +80,18 @@ PS_VO=225
 
 # iptables rule to match Voip traffic
 # ATA is .10, but also allow other devices... .8  to .15
-MATCH_VO="-s 192.168.1.8/29 -p udp"
+MATCH_VO_IP4="-s 192.168.1.8/29 -p udp"
+# So we need one??
+MATCH_VO_IP6=
 
 # Guaranteed latency for RATE40 LowLat class (assuming 1500 MTU)
 LAT_BR=1500
 LAT_MS=1 # At 780kbps, 196kbits takes 200ms - bring down to 50ms
           # (Minimum considering the RATEUP max rate)
 
-# User classes source interfaces
-LAN_USER=br-lan
-LOC_USER=br-loc
+# User classes source interfaces and rule targets
+LAN_USER=br-lan.67
+LOC_USER=br-lan.68
 
 # Max payload size for LOWLAT class. According to Google's SPDY research
 # project whitepaper, typical header sizes of 700-800 bytes is common
@@ -137,6 +142,11 @@ dbg_iptables() {
 	$cmd_iptables "$@" ||
 	echo E: iptables "$@"
 }
+dbg_ip6tables() {
+	[ "${DEBUG:-0}" -eq 0 ] || echo D: ip6tables "$@"
+	$cmd_ip6tables "$@" ||
+	echo E: ip6tables "$@"
+}
 
 dbg_tc() {
 	[ "${DEBUG:-0}" -eq 0 ] || echo D: tc "$@"
@@ -146,15 +156,25 @@ dbg_tc() {
 
 # Default commands
 iptables="dbg_iptables"
+ip6tables="dbg_ip6tables"
 tc="dbg_tc"
 
 # Reset everything to a known state (cleared)
 $tc qdisc del dev $DEV root 2>/dev/null
 # Flush and delete tables
-$iptables -t mangle -D PREROUTING ! -i $DEV -j QoS_wan 2>/dev/null
-$iptables -t mangle -D OUTPUT -j QoS_wan 2>/dev/null
-$iptables -t mangle -F QoS_wan 2>/dev/null
-$iptables -t mangle -X QoS_wan 2>/dev/null
+for ipt in $iptables $ip6tables
+do
+	$ipt -t mangle -D PREROUTING ! -i $DEV -j QoS_wan 2>/dev/null
+	$ipt -t mangle -D OUTPUT -j QoS_wan 2>/dev/null
+	$ipt -t mangle -F QoS_wan 2>/dev/null
+	$ipt -t mangle -X QoS_wan 2>/dev/null
+	$ipt -t mangle -F QoS_wan_lan 2>/dev/null
+	$ipt -t mangle -X QoS_wan_lan 2>/dev/null
+	$ipt -t mangle -F QoS_wan_loc 2>/dev/null
+	$ipt -t mangle -X QoS_wan_loc 2>/dev/null
+	$ipt -t mangle -F QoS_wan_rt 2>/dev/null
+	$ipt -t mangle -X QoS_wan_rt 2>/dev/null
+done
 
 # Stop here if given a stop command
 if [ x"$1" == x"stop" ]
@@ -192,18 +212,53 @@ $tc class add dev $DEV parent 1:20 classid 1:22 hfsc sc rate ${RATE40}kbit
 $tc class add dev $DEV parent 1:10 classid 1:13 hfsc sc rate ${RATE20}kbit
 $tc class add dev $DEV parent 1:20 classid 1:23 hfsc sc rate ${RATE20}kbit
 
-# iptables QoS chain
-$iptables -t mangle -N QoS_wan
-$iptables -t mangle -A PREROUTING ! -i $DEV -j QoS_wan
-$iptables -t mangle -A OUTPUT -j QoS_wan
+# iptables / ip6tables QoS chains
+for ver in 4 6
+do
+	case $ver in
+		4)
+			ipt=$iptables
+			match_vo=$MATCH_VO_IP4
+			;;
+		6)
+			ipt=$ip6tables
+			match_vo=$MATCH_VO_IP6
+			;;
+		*)
+			echo "Blimey! I should stop smoking the carpet...";
+			exit 1
+	esac
 
-# iptables MARK's - packet source (LAN/LOC)
-# Default LAN (mark 1), unless from br-loc (mark 2)
-$iptables -t mangle -A QoS_wan ! -i br-loc -j MARK --set-mark 0x0001
-$iptables -t mangle -A QoS_wan -i br-loc -j MARK --set-mark 0x0002
+	$ipt -t mangle -N QoS_wan
+	$ipt -t mangle -A PREROUTING ! -i $DEV -j QoS_wan
+	$ipt -t mangle -A OUTPUT -j QoS_wan
+	$ipt -t mangle -N QoS_wan_lan
+	$ipt -t mangle -N QoS_wan_loc
+	$ipt -t mangle -N QoS_wan_rt
 
-# Mark vor VoIP traffic
-$iptables -t mangle -A QoS_wan $MATCH_VO -m length --length 0:$PS_VO -j MARK --set-mark 0x0003
+	# iptables MARK targets - mark and accept (do not try other rules)
+	$ipt -t mangle -A QoS_wan_lan -j MARK --set-mark 0x0001
+	$ipt -t mangle -A QoS_wan_lan -j ACCEPT
+	$ipt -t mangle -A QoS_wan_loc -j MARK --set-mark 0x0002
+	$ipt -t mangle -A QoS_wan_loc -j ACCEPT
+	$ipt -t mangle -A QoS_wan_rt -j MARK --set-mark 0x0003
+	$ipt -t mangle -A QoS_wan_rt -j ACCEPT
+
+	# Mark for VoIP traffic (realtime)
+	if [ -n "$match_vo" ]
+	then
+		$ipt -t mangle -A QoS_wan $match_vo -m length --length 0:$PS_VO -j QoS_wan_rt
+	fi
+
+	# Mark based on packet source (LAN/LOC)
+	# Default LAN (mark 1), unless from br-loc (mark 2)
+	$ipt -t mangle -A QoS_wan -i $LAN_USER -j QoS_wan_lan
+	$ipt -t mangle -A QoS_wan -i $LOC_USER -j QoS_wan_loc
+	# Everything else, assume lan
+	$ipt -t mangle -A QoS_wan -j QoS_wan_lan
+	# That was for testing, broken, needs work
+	#$ipt -t mangle -A QoS_wan -i br-lan.68 -m mac --mac-source 24:4B:FE:4C:86:57 -j MARK --set-mark 0xF000
+done
 
 # $tc filtering
 #
@@ -372,5 +427,6 @@ done
 
 ## End
 
-echo QoS Started.
+# FIXME:: UNMATCHED TRAFFIC??? should we just push it somewhere?? (realized now it's being dumped!)
 
+echo QoS Started.

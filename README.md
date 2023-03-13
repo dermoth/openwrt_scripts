@@ -16,17 +16,14 @@ handle IPv6's variable header lengths. It should be rewritten to use iptables
 MARK's to do proper classification (as it does to differentiate between source
 LANs before traffic is masqueraded behind the router's external IP address).
 
-
 1. See the script header for more info and configuration details. The traffic
    shaping schema at the top of the script can be rendered with ditaa.
-
 
 2. Documentation links for the HFSC scheduler
 
    http://linux-ip.net/articles/hfsc.en/
 
    http://linuxreviews.org/man/tc-hfsc/
-
 
 3. Documentation links for the u32 classifier
 
@@ -35,7 +32,6 @@ LANs before traffic is masqueraded behind the router's external IP address).
    http://lartc.org/howto/lartc.adv-filter.html
 
    http://ace-host.stuart.id.au/russell/files/tc/doc/cls_u32.txt
-
 
 4. Open issues
 
