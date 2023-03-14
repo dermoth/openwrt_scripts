@@ -53,7 +53,7 @@ log() {
 	# Params: prio messages...
 	local prio=$1
 	shift
-	logger -p "$prio" -t "$NAME[$$]" "$*" || :
+	logger -p "$prio" -t "${NAME}[$$]" "$*" || :
 }
 
 #nets_from_iface() {
@@ -233,7 +233,7 @@ done
 set +u
 declare -a counts
 #Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
-while read dow mon day time year fnprio proc msg
+while read -r dow mon day time year fnprio proc msg
 do
 	log notice "$dow $mon $day $time $year $fnprio $proc $msg"
 

@@ -63,7 +63,7 @@ log() {
 	# Params: prio messages...
 	local prio=$1
 	shift
-	logger -p "$prio" -t "$NAME[$$]" "$*" || :
+	logger -p "$prio" -t "${NAME}[$$]" "$*" || :
 }
 
 match() {
@@ -87,7 +87,7 @@ log notice "Started"
 #Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
 #Sun Mar 12 09:15:01 2023 daemon.err hostapd: Failed to set beacon parameters
 count=0
-while read dow mon day time year fnprio proc msg
+while read -r dow mon day time year fnprio proc msg
 do
 	match fnprio "$TRIGGERFP" || continue
 	match proc "$TRIGGERPS" || continue
