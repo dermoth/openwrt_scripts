@@ -79,15 +79,12 @@ ip42long() {
 	local i ret=0 offset=24
 	local -a nibbles
 	IFS=. read -a nibbles <<<"$1"
-	if [ ${#nibbles[@]} -ne 4 ]
-	then
+	if [ ${#nibbles[@]} -ne 4 ]; then
 		log err "ip42long: Invalid IPv4: $1"
 		return 1
 	fi
-	for ((i=0; i<4; i++))
-	do
-		if _isnibble4 "${nibbles[i]}"
-		then
+	for ((i=0; i<4; i++)); do
+		if _isnibble4 "${nibbles[i]}"; then
 			# Shift ret, add nibble (last 1 makes statement always true)
 			((ret=ret<<8, ret+=10#${nibbles[i]}, 1))
 		else
@@ -99,8 +96,7 @@ ip42long() {
 }
 
 long2ip4() {
-	if [ $1 -lt 0 ] || [ $1 -gt 4294967295 ]
-	then
+	if [ $1 -lt 0 ] || [ $1 -gt 4294967295 ]; then
 		log err "long2ip4: Long out of range: $1"
 		return 1
 	fi
@@ -112,8 +108,7 @@ ip62hex() {
 	local i j gap ret= offset=24
 	local -a nibbles
 	# Check for single trailing : (uncaught otherwise)
-	if [ "${1/%[!:]:}" != "$1" ]
-	then
+	if [ "${1/%[!:]:}" != "$1" ]; then
 		log err "Invalid IPv6: Trailing colon: $1"
 		return 1
 	fi
@@ -121,35 +116,26 @@ ip62hex() {
 
 	i=${#nibbles[@]}
 	gap=$((8-i))
-	for ((i=0; i<8; i++))
-	do
-		if [ ! -v nibbles[i] ]
-		then
+	for ((i=0; i<8; i++)); do
+		if [ ! -v nibbles[i] ]; then
 			# FIXME: Sounds broken, where is gap handled?
 			log err "Invalid IPv6 (or confused myself): $1"
 			return 1
-		fi
-		if [ -z "${nibbles[i]}" ]
-		then
-			if ((gap<0))
-			then
+		elif [ -z "${nibbles[i]}" ]; then
+			if ((gap<0)); then
 				log err "Invalid IPv6: Too many blanks: $1"
 				return 1
-			fi
-			if ((i==0))
-			then
+			elif ((i==0)); then
 				# Read counts leading empty fields but not trailing
 				((++i))  # Read counts leading empty fielsd but not trailing
 				ret+='0000'
 			fi
 			# Move nibbles after gap
-			for ((j=7; j>=i+gap; j--))
-			do
+			for ((j=7; j>=i+gap; j--)); do
 				nibbles[j]=${nibbles[j-gap]}
 			done
 			# Fill gap
-			for ((; i<=j; i++))
-			do
+			for ((; i<=j; i++)); do
 				nibbles[i]=
 				ret+='0000'
 			done
@@ -157,9 +143,7 @@ ip62hex() {
 			ret+='0000'
 			continue
 			#((i+=gap))
-		fi
-		if _isnibble6 "${nibbles[i]}"
-		then
+		elif _isnibble6 "${nibbles[i]}"; then
 			printf -v ret '%s%04x' "$ret" "$((16#${nibbles[i]}))"
 		else
 			log err "Invalid IPv6 nibble (idx=$i): ${nibbles[i]} ($1)"
@@ -171,22 +155,18 @@ ip62hex() {
 
 hex2ip6() {
 	local i tmp gappos gaplen=0 ret=
-	if [ -n "${1//[0-9a-fA-F]}" ]
-	then
+	if [ -n "${1//[0-9a-fA-F]}" ]; then
 		log err "Invalid hex: $1"
 		return 1
-	elif [ ${#1} -ne 32 ]
-	then
+	elif [ ${#1} -ne 32 ]; then
 		log err "Invalid hex lenght (${#1})"
 		return 1
 	fi
 
 	# Find longest gap
-	for ((i=32; i>=4; i-=4))
-	do
+	for ((i=32; i>=4; i-=4)); do
 		printf -v tmp "%0${i}i" 0
-		if [ "${1/$tmp}" != "$1" ]
-		then
+		if [ "${1/$tmp}" != "$1" ]; then
 			gaplen=$i
 			tmp=${1/$tmp/:}
 			tmp=${tmp%:*}
@@ -196,10 +176,8 @@ hex2ip6() {
 	done
 
 	tmp=':'
-	for ((i=0; i<=28; i+=4))
-	do
-		if ((gaplen && i==gappos))
-		then
+	for ((i=0; i<=28; i+=4)); do
+		if ((gaplen && i==gappos)); then
 			# Fill up gap
 
 			printf -v ret "%s:" "$ret"
@@ -224,8 +202,8 @@ match() {
 
 log notice "Started"
 
-for int in $WL_INTS
-do
+for int in $WL_INTS; do
+	log info "(Re-)Adding whitelist rule for $int"
 	iptables -D input_rule -i $int -j RETURN || :
 	iptables -I input_rule 1 -i $int -j RETURN
 done
@@ -233,26 +211,23 @@ done
 set +u
 declare -a counts
 #Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
-while read -r dow mon day time year fnprio proc msg
-do
-	log notice "$dow $mon $day $time $year $fnprio $proc $msg"
+while read -r dow mon day time year fnprio proc msg; do
+	log info "$dow $mon $day $time $year $fnprio $proc $msg"
 
 	match fnprio authpriv.warn || continue
 	match proc 'dropbear*' || continue
 	match msg 'Bad password attempt for * from *' || continue
 
 	ipport=${msg##*from }
-	if match ipport '*.*.*.*:*'
-	then
+	if match ipport '*.*.*.*:*'; then
 		ipaddr=${ipport%:*}
 		ip42long "$ipaddr"
-		if ((++counts[retval] > 10))
-		then
+		if ((++counts[retval] > 10)); then
 			unset counts[retval]
-			log warn "10 attempts from $ipaddr - thanks you have a good day..."
+			log notice "10 attempts from $ipaddr - thanks you have a good day..."
 			iptables -A input_rule -p tcp -s "$ipaddr" -j DROP
 		fi
 	else
-		log err "Unexpected match (IPv6?): $ipport"
+		log warn "Unexpected match (IPv6?): $ipport"
 	fi
 done < <(logread -f -e '^dropbear.\+Bad password attempt for' -p "$PIDFILE")
