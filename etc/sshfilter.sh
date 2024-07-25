@@ -8,10 +8,14 @@
 
 ###############
 
-# Whitelist networks (an interface here will add its network to the whitelist)
-WL_NETS="192.168.1.0/24 loc"  # FIXME: TODO
+# Count of failures to blacklist
+FAIL_COUNT=10
 
-WL_INTS="br-lan br-loc"
+# IPv4 block prefix
+IP4_PREFIX=24
+
+# IPv6 block prefix
+IP6_PREFIX=48
 
 ###############
 
@@ -26,7 +30,7 @@ PIDFILE=/var/run/${NAME%.*}-logread.pid
 declare -xr PATH='/bin:/usr/bin:/sbin:/usr/sbin'
 
 # Don't allow redefining these
-declare -r WL_NETS WL_INTS NAME PIDFILE
+declare -r NAME PIDFILE FAIL_COUNT IP4_PREFIX IP6_PREFIX
 
 trap_setup() {
 	local sig
@@ -44,6 +48,7 @@ trap_setup() {
 	trap 'shutdown "unknown signal"' EXIT
 	# Catch most common signals
 	for sig in HUP INT QUIT ABRT ALRM TERM USR1 USR2; do
+		# shellcheck disable=SC2064  # progrmatic trap setup
 		trap "shutdown 'SIG$sig ($(kill -l "SIG$sig"))'" "SIG$sig"
 	done
 }
@@ -67,6 +72,11 @@ _isnibble4() {
 	return 0
 }
 
+_ismask4() {
+	[ "$1" -ge 0 ] && [ "$1" -le 32 ] && return 0
+	return 1
+}
+
 _isnibble6() {
 	# Contains only hex digits?
 	[ -z "${1//[0-9a-fA-F]}" ] || return 1
@@ -75,10 +85,20 @@ _isnibble6() {
 	return 0
 }
 
+_ismask6() {
+	[ "$1" -ge 0 ] && [ "$1" -le 128 ] && return 0
+	return 1
+}
+
+
 ip42long() {
-	local i ret=0 offset=24
+	local i prefix mask ret=0
 	local -a nibbles
-	IFS=. read -a nibbles <<<"$1"
+	IFS=. read -r -a nibbles <<<"$1"
+	prefix=${2:-32}
+	if ! _ismask4 "$prefix"; then
+		log err "ip42long: Invalid mask: $prefix"
+	fi
 	if [ ${#nibbles[@]} -ne 4 ]; then
 		log err "ip42long: Invalid IPv4: $1"
 		return 1
@@ -92,34 +112,43 @@ ip42long() {
 			return 1
 		fi
 	done
+	mask=$(( ((1 << prefix) - 1) << (32-prefix) ))
+	ret=$((ret & mask))
 	retval=$ret
 }
 
 long2ip4() {
-	if [ $1 -lt 0 ] || [ $1 -gt 4294967295 ]; then
+	if [ "$1" -lt 0 ] || [ "$1" -gt 4294967295 ]; then
 		log err "long2ip4: Long out of range: $1"
 		return 1
 	fi
 	local a=$(($1>>24 & 255)) b=$(($1>>16 & 255)) c=$(($1>>8 & 255)) d=$(($1 & 255))
-	printf -v retval '%d.%d.%d.%d\n' "$a" "$b" "$c" "$d"
+	printf -v retval '%d.%d.%d.%d' "$a" "$b" "$c" "$d"
 }
 
 ip62hex() {
-	local i j gap ret= offset=24
+	local i j gap prefix subpfx mask ret=
 	local -a nibbles
 	# Check for single trailing : (uncaught otherwise)
 	if [ "${1/%[!:]:}" != "$1" ]; then
 		log err "Invalid IPv6: Trailing colon: $1"
 		return 1
 	fi
-	IFS=: read -a nibbles <<<"$1"
+	IFS=: read -r -a nibbles <<<"$1"
+	prefix=${2:-128}
+	if ! _ismask6 "$prefix"; then
+		log err "ip42long: Invalid mask: $prefix"
+	fi
 
 	i=${#nibbles[@]}
 	gap=$((8-i))
+
+	# FIXME: leading or trailing :: with no gap: replace with leading or trailing 0000
+
 	for ((i=0; i<8; i++)); do
-		if [ ! -v nibbles[i] ]; then
-			# FIXME: Sounds broken, where is gap handled?
-			log err "Invalid IPv6 (or confused myself): $1"
+
+		if [ ! -v 'nibbles[i]' ]; then
+			log err "Invalid IPv6 (missing nibble): $1"
 			return 1
 		elif [ -z "${nibbles[i]}" ]; then
 			if ((gap<0)); then
@@ -127,7 +156,8 @@ ip62hex() {
 				return 1
 			elif ((i==0)); then
 				# Read counts leading empty fields but not trailing
-				((++i))  # Read counts leading empty fielsd but not trailing
+				((++i))  # Read counts leading empty fields but not trailing
+				prefix=$((prefix-16))  # Eat prefix but no need to AND as it's 0 already
 				ret+='0000'
 			fi
 			# Move nibbles after gap
@@ -137,14 +167,20 @@ ip62hex() {
 			# Fill gap
 			for ((; i<=j; i++)); do
 				nibbles[i]=
+				prefix=$((prefix-16))  # Eat prefix but no need to AND as it's 0 already
 				ret+='0000'
 			done
 			gap=-1  # So we know he processed one
+			prefix=$((prefix-16))  # Eat prefix but no need to AND as it's 0 already
 			ret+='0000'
 			continue
-			#((i+=gap))
 		elif _isnibble6 "${nibbles[i]}"; then
-			printf -v ret '%s%04x' "$ret" "$((16#${nibbles[i]}))"
+			# Get prefix for this 16-bit nibble)
+			subpfx=$((prefix > 0 ? prefix : 0))
+			prefix=$((prefix-16))
+			subpfx=$((prefix > 0 ? subpfx - prefix : subpfx))
+			mask=$(( ((1 << subpfx) - 1) << (16-subpfx) ))
+			printf -v ret '%s%04x' "$ret" "$((16#${nibbles[i]} & mask))"
 		else
 			log err "Invalid IPv6 nibble (idx=$i): ${nibbles[i]} ($1)"
 			return 1
@@ -190,44 +226,87 @@ hex2ip6() {
 	retval=$ret
 }
 
-match() {
-	local var=$1 match=$2
-	case ${!var} in
-		$match) return 0
-	esac
-	return 1
-}
-
-# First add/replace whitelist entries
+# We no longer install our config directly, instead rely on existing rules
+if ! nft list set inet fw4 sshfilter4 >/dev/null ||
+   ! nft list set inet fw4 sshfilter6 >/dev/null; then
+	log crit "You must create sshfilter4 and sshfilter6 ipsets in fw4 first!"
+	log crit "Use these ipsets to setup your filtering rules, this tool updates them."
+	exit 1
+fi
 
 log notice "Started"
 
-for int in $WL_INTS; do
-	log info "(Re-)Adding whitelist rule for $int"
-	iptables -D input_rule -i $int -j RETURN || :
-	iptables -I input_rule 1 -i $int -j RETURN
-done
 
 set +u
 declare -a counts
+declare -A count6
 #Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
 while read -r dow mon day time year fnprio proc msg; do
 	log info "$dow $mon $day $time $year $fnprio $proc $msg"
 
-	match fnprio authpriv.warn || continue
-	match proc 'dropbear*' || continue
-	match msg 'Bad password attempt for * from *' || continue
+	case $fnprio in
+		authpriv.info|authpriv.warn)
+			;;
+		*)
+			log warn "Unexpected fnprio: $fnprio"
+			continue
+			;;
+	esac
 
-	ipport=${msg##*from }
-	if match ipport '*.*.*.*:*'; then
-		ipaddr=${ipport%:*}
-		ip42long "$ipaddr"
-		if ((++counts[retval] > 10)); then
-			unset counts[retval]
-			log notice "10 attempts from $ipaddr - thanks you have a good day..."
-			iptables -A input_rule -p tcp -s "$ipaddr" -j DROP
-		fi
-	else
-		log warn "Unexpected match (IPv6?): $ipport"
-	fi
-done < <(logread -f -e '^dropbear.\+Bad password attempt for' -p "$PIDFILE")
+	case $proc in
+		dropbear\[*\]:)
+			;;
+		*)
+			log warn "Unexpected proc: $proc"
+			continue
+	esac
+
+	case $msg in
+		Bad\ password\ attempt\ for\ *\ from\ *)
+			ipport=${msg##*from }
+			;;
+		Exit\ before\ auth\ from\ \<*\>:*Exited\ normally)
+			ipport=${msg##*from <}
+			ipport=${ipport%%>*}
+			;;
+		Exit\ before\ auth\ from\ \<*\>:*)
+			# Likely hack attempts, may be more aggessive for these
+			ipport=${msg##*from <}
+			ipport=${ipport%%>*}
+			;;
+		*)
+			log notice "Unmatch: $dow $mon $day $time $year $fnprio $proc $msg"
+			continue
+	esac
+
+	case $ipport in
+		?*.?*.?*.?*:?*)
+			ipaddr=${ipport%:*}
+			ip42long "$ipaddr" "$IP4_PREFIX"
+			ipaddr=$retval
+			long2ip4 "$retval"
+			if ((++counts[ipaddr] > FAIL_COUNT)); then
+				#unset counts[ipaddr]
+				counts[ipaddr]=-100000000
+				log notice "$FAIL_COUNT attempts from $retval/$IP4_PREFIX - thanks you have a good day..."
+				nft "add element inet fw4 sshfilter4 { $retval/$IP4_PREFIX }"
+			fi
+			;;
+		?*:?*:?*:?*:?*:?*:?*:?*:?*|?*::?*:?*|?*:::?*)
+			ipaddr=${ipport%:*}
+			ip62hex "$ipaddr" "$IP6_PREFIX"
+			ipaddr=$retval
+			hex2ip6 "$retval"
+			if ((++count6[$ipaddr] > FAIL_COUNT)); then
+				unset "count6[$ipaddr]"
+				log notice "$FAIL_COUNT attempts from $retval/$IP6_PREFIX - thanks you have a good day..."
+				nft "add element inet fw4 sshfilter6 { $retval/$IP6_PREFIX }"
+			fi
+			;;
+		::?*)
+			log warn "Connection from loopback: $ipport"
+			;;
+		*)
+			log warn "Unexpected match: $ipport"
+	esac
+done < <(logread -f -e '^dropbear.\+\(Bad password attempt for\|Exit before auth from\)' -p "$PIDFILE")
