@@ -1,0 +1,10 @@
+# /etc/systemd/system/sshfilter.service
+[Unit]
+Description=SSH Blacklist Filter
+
+[Service]
+Type=exec
+ExecStart=/etc/sshfilter.sh
+
+[Install]
+WantedBy=default.target
