@@ -23,6 +23,36 @@ set -eu
 
 NAME=${0##*/}
 
+# Handled signals
+SIGNALS=(HUP INT QUIT ABRT ALRM USR1 USR2 PIPE TERM)
+
+### DEBUG ###
+#iptables() {
+#	echo iptable "${@@Q}"
+#}
+#nft() {
+#	echo nft "${@@Q}"
+#}
+#logger() {
+#	# Assumes argument order from log() !!
+#	case $2 in
+#		debug) return;;
+#		info)  return;;
+#	esac
+#	echo log "${*:4}"
+#}
+#logread() {
+#	# Assumes argument order from logread() !!
+#	grep 'dropbear' /var/log/openwrt.log.1 /var/log/openwrt.log |
+#		while read -r _ hn msg; do
+#			[ "$hn" == OpenWrt ] || continue
+#			printf '%s\n' "$msg"
+#		done |
+#	grep "$3" |
+#	sed 's/^/Thu Jan 01 00:00:00 1970 authpriv.warn /'
+#}
+### DEBUG ###
+
 # logger's pidfile
 PIDFILE=/var/run/${NAME%.*}-logread.pid
 
@@ -35,11 +65,17 @@ declare -r NAME PIDFILE FAIL_COUNT IP4_PREFIX IP6_PREFIX
 trap_setup() {
 	local sig
 	shutdown() {
-		local reason=$1
+		local reason=$1 signal=${2:-SIGTERM}
 
 		log notice "Shutting down on $reason"
-		[ -e "$PIDFILE" ] && kill "$(<"$PIDFILE")"
 		trap - EXIT  # Override catch-all exit trap
+		trap - "${SIGNALS[@]}"  # Remove all handlers
+		if [ -e "$PIDFILE" ]; then
+			kill "$(<"$PIDFILE")"
+		else
+			# Use kill command, pid 0 is pgroup
+			command kill -s "$signal" 0
+		fi
 	}
 
 	trap 'shutdown "fatal error at line $LINENO"' ERR
@@ -47,9 +83,9 @@ trap_setup() {
 	# Everything else (logread died or unhandled signal)
 	trap 'shutdown "unknown signal"' EXIT
 	# Catch most common signals
-	for sig in HUP INT QUIT ABRT ALRM TERM USR1 USR2; do
+	for sig in "${SIGNALS[@]}"; do
 		# shellcheck disable=SC2064  # progrmatic trap setup
-		trap "shutdown 'SIG$sig ($(kill -l "SIG$sig"))'" "SIG$sig"
+		trap "shutdown 'SIG$sig ($(kill -l "SIG$sig"))' SIG$sig" "SIG$sig"
 	done
 }
 trap_setup
@@ -60,9 +96,6 @@ log() {
 	shift
 	logger -p "$prio" -t "${NAME}[$$]" "$*" || :
 }
-
-#nets_from_iface() {
-#}
 
 _isnibble4() {
 	# Contains only digits?
@@ -234,14 +267,42 @@ if ! nft list set inet fw4 sshfilter4 >/dev/null ||
 	exit 1
 fi
 
-log notice "Started"
+# Do we create our own table or hook into fw4 ??
+#drop first.... then
+#nft add chain inet fw4 ssh_filter
+#nft add rule inet fw4 input_wan tcp dport 22 jump ssh_filter
+##### nft add rule inet fw4 ssh_filter ip saddr 64.23.184.171 drop
+# Or include here:
+#/usr/share/nftables.d/chain-pre/input_wan/ssh_filter.nft
+#/usr/share/nftables.d/chain-pre/input_wan/ssh_filter.nft
+# Or
+# For example, to add custom logging to the input_wan chain:
+#
+# # /etc/config/firewall
+#config include
+#	option	type		'nftables'
+#	option	path		'/etc/sshfilter_persist.nft'
+#	option	position	'chain-pre'
+#	option	chain		'ssh_filter'
+#
+# # /etc/sshfilter_persist.nft  TODO: use ipsets
+#ip saddr 64.23.184.171 drop
+#
+# To add one or more custom chains:
+#
+#config include
+#	option	type		'nftables'
+#	option	path		'/etc/sshfilter_chain.nft'
+#	option	position	'table-post'
+# OR use named set (already configured!!
+#nft add element inet fw4 sshfilter4 { 64.23.184.171 }
+#nft add element inet fw4 sshfilter6 { 2001:56b:9fef:c6b3:0:3b:e9ef:601 }  # DON'T ADD - MY PHONE
+# Possibly add persist file, loas using hooks
 
+filter() {
+	local dow=$1 mon=$2 day=$3 time=$4 year=$5 fnprio=$6 proc=$7 msg=$8
+	local ipport
 
-set +u
-declare -a counts
-declare -A count6
-#Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
-while read -r dow mon day time year fnprio proc msg; do
 	log info "$dow $mon $day $time $year $fnprio $proc $msg"
 
 	case $fnprio in
@@ -249,7 +310,7 @@ while read -r dow mon day time year fnprio proc msg; do
 			;;
 		*)
 			log warn "Unexpected fnprio: $fnprio"
-			continue
+			return
 			;;
 	esac
 
@@ -258,7 +319,7 @@ while read -r dow mon day time year fnprio proc msg; do
 			;;
 		*)
 			log warn "Unexpected proc: $proc"
-			continue
+			return
 	esac
 
 	case $msg in
@@ -276,8 +337,13 @@ while read -r dow mon day time year fnprio proc msg; do
 			;;
 		*)
 			log notice "Unmatch: $dow $mon $day $time $year $fnprio $proc $msg"
-			continue
+			return
 	esac
+
+	if ! [ -v ipport ]; then
+		log warn "Possible missed extraction: $dow $mon $day $time $year $fnprio $proc $msg"
+		return
+	fi
 
 	case $ipport in
 		?*.?*.?*.?*:?*)
@@ -285,9 +351,9 @@ while read -r dow mon day time year fnprio proc msg; do
 			ip42long "$ipaddr" "$IP4_PREFIX"
 			ipaddr=$retval
 			long2ip4 "$retval"
-			if ((++counts[ipaddr] > FAIL_COUNT)); then
-				#unset counts[ipaddr]
-				counts[ipaddr]=-100000000
+			if ((++counts[$ipaddr] > FAIL_COUNT)); then
+				#unset counts[$ipaddr]
+				counts[$ipaddr]=-100000000
 				log notice "$FAIL_COUNT attempts from $retval/$IP4_PREFIX - thanks you have a good day..."
 				nft "add element inet fw4 sshfilter4 { $retval/$IP4_PREFIX }"
 			fi
@@ -298,7 +364,8 @@ while read -r dow mon day time year fnprio proc msg; do
 			ipaddr=$retval
 			hex2ip6 "$retval"
 			if ((++count6[$ipaddr] > FAIL_COUNT)); then
-				unset "count6[$ipaddr]"
+				#unset "count6[$ipaddr]"
+				count6[$ipaddr]=-100000000
 				log notice "$FAIL_COUNT attempts from $retval/$IP6_PREFIX - thanks you have a good day..."
 				nft "add element inet fw4 sshfilter6 { $retval/$IP6_PREFIX }"
 			fi
@@ -309,4 +376,15 @@ while read -r dow mon day time year fnprio proc msg; do
 		*)
 			log warn "Unexpected match: $ipport"
 	esac
+}
+
+log notice "Started"
+
+set +u
+declare -A counts count6
+
+#Mon Oct 25 04:22:26 2021 authpriv.warn dropbear[24043]: Bad password attempt for 'root' from 101.132.98.26:45201
+# Main loop...
+while read -r dow mon day time year fnprio proc msg; do
+	filter "$dow" "$mon" "$day" "$time" "$year" "$fnprio" "$proc" "$msg"
 done < <(logread -f -e '^dropbear.\+\(Bad password attempt for\|Exit before auth from\)' -p "$PIDFILE")
